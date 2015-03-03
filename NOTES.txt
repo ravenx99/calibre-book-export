@@ -1,0 +1,6 @@
+I *could* find the book in the library on disk by simply doing a find for "(book_number)"
+since that should be unique.  I could probably avoid using the export function entirely
+and just symlink to the existing book file.  Which could eliminate the whole temporary
+directory if the book file's timestamp doesn't change unless its contents actually change.
+
+Hm...

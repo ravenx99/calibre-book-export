@@ -1,0 +1,140 @@
+#!/bin/bash
+
+# Version: b01
+# Author: Carl Cravens (raven@phoenyx.net)
+# Web: https://github.com/ravenx99/calibre-book-export
+
+# finds all Calibre books with "export" in the "#fav" column, exports
+# them to a temporary directory and then compares them to "the depot"
+# and moves only those books that have changed
+
+# create folders equal to top-level of first #genre
+##  Roleplaying.Fantasy.Adventure
+# goes in a folder named "Roleplaying".
+
+appname=${0##*/}
+
+function debugmsg() {
+    [[ $debug -gt 0 ]] && echo >&2 "appname: $@"
+}
+
+function errormsg() {
+    echo >&2 "ERROR: appname: $@"
+}
+
+declare -a longopts
+longopts=(
+    efc export-flag-column
+    ek export-keyword
+    fsc folder-source-column
+    fss folder-source-separator
+    ef export-formats
+)
+
+args=$(getopt --alternative \
+    --options 'dh' \
+    --longoptions 'debug,help' \
+    --name "$appname" -- "$@")
+
+if [[ $? != 0 ]]; then
+    errormsg "Terminating..."
+    exit 1
+fi
+
+eval set -- "$args"
+
+# all of the config file options should be available as command-line
+# options, making the config file unnecessary
+function usage() {
+    echo "usage: $appname [...] [--debug]"
+}
+
+debug=0
+exportflagcolumn="#Fav"
+exportkeyword="export"
+foldersourcecolumn="#Genre"
+foldersourceseparator="."
+exportformats="epub,pdf,zip,cbz"
+
+while [[ $1 != '--' ]]; do
+    case "$1" in
+        -efc|--export-flag-column)      exportflagcolumn="$2"     ; shift 2 ;;
+         -ek|--export-keyword)          exportkeyword="$2"        ; shift 2 ;;
+        -fsc|--folder-source-column)    foldersourcecolumn="$2"   ; shift 2 ;;
+        -fss|--folder-source-separator) foldersourceseparator="$2"; shift 2 ;;
+         -ef|--export-formats)          exportformats="$2"        ; shift 2 ;;
+        -d|--debug)  debug=${$2:-$debug}  ; shift 2 ;;
+        -h|--help)   usage; exit 1;;
+        *) echo "Error processing args after getopt!" ; exit 1 ;;
+    esac
+done
+shift; # clean up the -- in $1
+
+# what's left in $@ will now need processed.
+
+
+tmpdir=$(mktemp --quiet --directory --tmpdir=/tmp cbexp.XXXXXXXXXX)
+targetdir=/data/ebook_depot
+
+debugmsg "using $tmpdir"
+
+mkdir -p $tmpdir $targetdir
+
+# associative array to hold genrefolder/bookids
+declare -A booklist
+
+while read bookid genre; do
+    if [[ -n ${booklist[$genre]} ]]; then
+        booklist[$genre]+=",$bookid"
+    else
+        booklist[$genre]="$bookid"
+    fi
+done < <(calibredb list --fields='*fav,*genre' |grep export |sed 's/export //' |cut -d. -f1)
+
+for genre in ${!booklist[@]}; do
+    debugmsg "exporting genre $genre : ${booklist[$genre]}"
+
+    genredir="$tmpdir/$genre"
+    calibredb export --to-dir $genredir --single-dir \
+        --dont-update-metadata --dont-write-opf --dont-save-cover \
+        --template='{title}' --replace-whitespace ${booklist[$genre]}
+done
+
+# export done, now we compare the newly exported tree to the existing
+# tree and only copy over books that have changed.  (This jumping
+# through hoops doesn't matter to Unison, but FolderSync on Android
+# uses only timestamps to know if something has changed.  Every export
+# causes FolderSync to recopy the files that haven't changed.)
+
+# need to delete files in the target that don't exist in the export tmpdir
+
+# we can meet both requirements using rsync, with --no-times (don't
+# copy timestamps) and --size-only (assume that files which haven't
+# changed in size are the same).  Without --size-only, rsync sees the
+# timestamps are different and automatically copies again.  (On a
+# local copy, it doesn't seem to be using the "only copy the changed
+# bits" algorithm.)
+
+# fix up the annoying filenames (commas, apostrophies, etc)
+cd $tmpdir
+fix_filenames >/dev/null
+cd - >/dev/null
+
+verbosity='--quiet'
+if [[ $debug -gt 0 ]]; then
+    verbosity='--verbose --progress'
+fi
+
+rsync $verbosity --archive --no-times --size-only --delete $tmpdir/ $targetdir
+
+# clean up the temporary export area
+debugmsg "Cleaning up $tmpdir"
+rm -rf $tmpdir
+
+debugmsg "done"
+exit
+
+
+
+
+

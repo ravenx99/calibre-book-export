@@ -1,0 +1,5 @@
+ExportFlagColumn="#Fav"
+ExportKeyword="export"
+FolderSourceColumn="#Genre"
+FolderSourceSeparator="."
+ExportFormats="epub,pdf,zip,cbz"
